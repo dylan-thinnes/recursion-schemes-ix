@@ -1,15 +1,16 @@
-{-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DeriveFoldable    #-}
+{-# LANGUAGE DeriveFunctor     #-}
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE TypeFamilies      #-}
+
 {-# OPTIONS_HADDOCK hide #-}
+
 -- Defines orphan instances for Recursive Type
 module Data.IFunctor.TH.Internal where
 
--- template-haskell
-import Language.Haskell.TH.Syntax
-
--- recursion-schemes
-import Data.Functor.Foldable.TH (makeBaseFunctor)
+import           Data.Functor.Foldable.TH   (makeBaseFunctor)
+import           Language.Haskell.TH.Syntax
 
 -- Useful, non-indexed recursion schemes over types
 -- Used in typeUpdateConcrete

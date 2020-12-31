@@ -1,25 +1,17 @@
 {-# LANGUAGE LambdaCase #-}
+
 module Data.IFunctor.TH
-    (
-      deriveMutualGADT
+    ( deriveMutualGADT
     ) where
 
-import Data.IFunctor.TH.Internal
-
--- base
-import Control.Monad ((>=>))
-import Data.Maybe (fromJust)
-
--- containers
-import qualified Data.Map as M
-import qualified Data.Set as S
-
--- template-haskell
-import qualified Language.Haskell.TH as TH
+import           Control.Monad              ((>=>))
+import           Data.Functor.Foldable (cata, embed)
+import           Data.IFunctor.TH.Internal
+import qualified Data.Map                   as M
+import           Data.Maybe                 (fromJust)
+import qualified Data.Set                   as S
+import qualified Language.Haskell.TH        as TH
 import qualified Language.Haskell.TH.Syntax as TH
-
--- recursion-schemes
-import Data.Functor.Foldable (cata, embed)
 
 {-|
   Given the name of a mutually-recursive datatype, derive an index and an
