@@ -16,8 +16,10 @@ import qualified Language.Haskell.TH        as TH
 import qualified Language.Haskell.TH.Syntax as TH
 
 {-|
+  Requires @DataKinds@, @GADTs@, @KindSignatures@.
+
   Given the name of a mutually-recursive datatype, derive an index and an
-  indexed functor as a GADT.
+  indexed functor as a GADT, with suffixes Ix/I and MF/MF respectively.
 
   For example, given:
 
@@ -41,6 +43,10 @@ import qualified Language.Haskell.TH.Syntax as TH
 -}
 deriveMutualGADT :: TH.Name -> TH.Q [TH.Dec]
 deriveMutualGADT topLevel = do
+    assertExtensionEnabled TH.DataKinds
+    assertExtensionEnabled TH.GADTs
+    assertExtensionEnabled TH.KindSignatures
+
     -- Find all constructors that are involved in a cycle
     recursiveConsNames <- S.toList <$> findRecursiveConstructors topLevel
 
@@ -96,6 +102,13 @@ deriveMutualGADT topLevel = do
     let gadtFix = TH.TySynD gadtFixName [] $ TH.ConT (TH.mkName "IFix") `TH.AppT` TH.ConT gadtName
 
     pure [gadt, tagDecl, gadtFix]
+
+assertExtensionEnabled :: TH.Extension -> TH.Q ()
+assertExtensionEnabled ext = do
+    enabled <- TH.isExtEnabled ext
+    if enabled
+       then fail $ "Extension '" ++ show ext ++ "' is not enabled."
+       else pure ()
 
 -- Name grouping & name manipulation
 type Names = S.Set TH.Name
