@@ -39,6 +39,7 @@ library
       Data.IFunctor.ICofree
       Data.IFunctor.IFree
       Data.IFunctor.IIdentity
+      Data.IFunctor.TH
       Data.IMonad
       Data.ITraversable
   other-modules:
@@ -48,6 +49,9 @@ library
   build-depends:
       base >=4.12 && <4.15
     , singlethongs ==0.1
+    , containers
+    , recursion-schemes
+    , template-haskell
   default-language: Haskell2010
 
 test-suite recursion-schemes-ix-test
