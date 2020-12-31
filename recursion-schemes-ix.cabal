@@ -43,6 +43,7 @@ library
       Data.IMonad
       Data.ITraversable
   other-modules:
+      Data.IFunctor.TH.Internal
       Paths_recursion_schemes_ix
   hs-source-dirs:
       src
