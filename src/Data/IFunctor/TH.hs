@@ -107,8 +107,8 @@ assertExtensionEnabled :: TH.Extension -> TH.Q ()
 assertExtensionEnabled ext = do
     enabled <- TH.isExtEnabled ext
     if enabled
-       then fail $ "Extension '" ++ show ext ++ "' is not enabled."
-       else pure ()
+       then pure ()
+       else fail $ "Extension '" ++ show ext ++ "' is not enabled."
 
 -- Name grouping & name manipulation
 type Names = S.Set TH.Name
