@@ -2,10 +2,12 @@
 
 module Data.IFunctor.TH
     ( deriveMutualGADT
+    , IFix(..)
     ) where
 
 import           Control.Monad              ((>=>))
-import           Data.Functor.Foldable (cata, embed)
+import           Data.Functor.Foldable      (cata, embed)
+import           Data.IFunctor.Foldable     (IFix(..))
 import           Data.IFunctor.TH.Internal
 import qualified Data.Map                   as M
 import           Data.Maybe                 (fromJust)
@@ -45,7 +47,7 @@ deriveMutualGADT topLevel = do
     -- Derive tag name, tag constructors' names
     tagName <- suffixify "Ix" topLevel
     tagConsNames <- mapM (suffixify "I") recursiveConsNames
-    let lookupTagConsByCons cons = lookup cons $ zip recursiveConsNames tagConsNames
+    let recursiveNamesAndTags = zip recursiveConsNames tagConsNames
 
     -- Tag declaration
     let tagConss = flip TH.NormalC [] <$> tagConsNames
@@ -59,38 +61,41 @@ deriveMutualGADT topLevel = do
     let gadtIxKind = TH.KindedTV gadtIx (TH.ConT tagName)
 
     -- Given a recursiveConsName, derive the constructors for a GADT
-    let recConsNameToGadtConss recursiveConsName = do
-            -- Pull out the datatype's constuctors & the tag constructor
+    let recConsNameToGadtConss (recursiveConsName, tagConsName) = do
+            -- Pull out the datatype's constuctors
             TH.TyConI (TH.DataD _ _ _ _ conss _) <- TH.reify recursiveConsName
-            let tagCons = fromJust $ lookupTagConsByCons recursiveConsName
 
             -- Final type is `<name> <f> <tag>`
-            let finalType = TH.ConT gadtName `TH.AppT` TH.VarT gadtF `TH.AppT` TH.PromotedT tagCons
+            let finalType = TH.ConT gadtName `TH.AppT` TH.VarT gadtF `TH.AppT` TH.PromotedT tagConsName
 
             -- Given a concrete type, if it matches any of the recursive
             -- datatypes, replace it with `f <tag>`
-            let updateMatchingType =
+            let matchingTypeToFTag =
                     typeUpdateConcrete $ \name ->
-                        case lookupTagConsByCons name of
+                        case lookup name recursiveNamesAndTags of
                           Just tag -> TH.AppT (TH.VarT gadtF) (TH.PromotedT tag)
                           Nothing  -> TH.ConT name
 
-            -- Update all constructors' types using updateMatchingType
+            -- Update all constructors' types using to their `f <tag>` equivalents
             -- Append MF to all constructor names
             -- Convert base constructors to GADT constructors
-            let updatedTypes = map (updateTypes updateMatchingType) conss
+            let updatedTypes = map (updateTypes matchingTypeToFTag) conss
             mfAppended <- mapM updateToMFName updatedTypes
             let gadtConss = conToGadt finalType <$> mfAppended
 
             pure gadtConss
 
     -- Derive GADT constructors for all recursive data types, concat
-    allGadtConss <- concat <$> mapM recConsNameToGadtConss recursiveConsNames
+    allGadtConss <- concat <$> mapM recConsNameToGadtConss recursiveNamesAndTags
 
     -- Final GADT w/ name, f, ix, and derived constructors
     let gadt = TH.DataD [] gadtName [gadtFKind, gadtIxKind] Nothing allGadtConss []
 
-    pure [gadt, tagDecl]
+    -- Type synonym for fixed version of GADT
+    gadtFixName <- suffixify "M" topLevel
+    let gadtFix = TH.TySynD gadtFixName [] $ TH.ConT (TH.mkName "IFix") `TH.AppT` TH.ConT gadtName
+
+    pure [gadt, tagDecl, gadtFix]
 
 -- Name grouping & name manipulation
 type Names = S.Set TH.Name
@@ -108,9 +113,9 @@ conToGadt finalType con =
     case con of
         TH.NormalC name bangTypes -> TH.GadtC [name] bangTypes finalType
         TH.RecC name varBangTypes -> TH.RecGadtC [name] varBangTypes finalType
-        TH.InfixC _ _ _           ->
+        TH.InfixC {}              ->
             error $ "Constructor '" ++ show con ++ "' to turn to GADT is Infix"
-        TH.ForallC _ _ _          ->
+        TH.ForallC {}             ->
             error $ "Constructor '" ++ show con ++ "' to turn to GADT is forall quanitified"
         _                         ->
             error $ "Constructor '" ++ show con ++ "' to turn to GADT is already a GADT"
@@ -156,7 +161,7 @@ findRecursiveConstructors name = S.fromList . M.keys . prune <$> nameDeps name
     prune :: NameMap -> NameMap
     prune names =
         let nonterminalNames = M.filter (not . S.null) names
-            nonterminalParents = M.map (S.filter (flip M.member nonterminalNames)) nonterminalNames
+            nonterminalParents = M.map (S.filter (`M.member` nonterminalNames)) nonterminalNames
         in
         if nonterminalParents == names
            then names
@@ -173,7 +178,7 @@ nameDeps name = go M.empty [name]
             newNamePairs <- zip frontier <$> mapM dataConcreteNames frontier
             let unseenNamePairs = filter (not . flip M.member found . fst) newNamePairs
             let newFound = foldr (\(parent, children) found -> M.insert parent children found) found unseenNamePairs
-            let newFrontier = S.toList $ foldr S.union S.empty $ map snd unseenNamePairs
+            let newFrontier = S.toList $ foldr (S.union . snd) S.empty unseenNamePairs
             go newFound newFrontier
 
 -- Get all concrete names used in the constructors for a datatype by name
@@ -215,7 +220,7 @@ typeConcreteNames =
       TH.VarT _ -> []
       TH.ConT name -> [name]
       TH.PromotedT _ -> []
-      TH.InfixT lType name rType -> [name] ++ ([lType, rType] >>= typeConcreteNames)
-      TH.UInfixT lType name rType -> [name] ++ ([lType, rType] >>= typeConcreteNames)
+      TH.InfixT lType name rType -> name : ([lType, rType] >>= typeConcreteNames)
+      TH.UInfixT lType name rType -> name : ([lType, rType] >>= typeConcreteNames)
       TH.ParensT subtype -> typeConcreteNames subtype
       _ -> []
