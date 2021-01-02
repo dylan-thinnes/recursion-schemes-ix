@@ -2,6 +2,7 @@
 
 module Data.IFunctor.TH
     ( deriveMutualGADT
+      -- * Re-exported from Data.IFunctor.Foldable
     , IFix(..)
     ) where
 
@@ -19,30 +20,80 @@ import qualified Language.Haskell.TH        as TH
 import qualified Language.Haskell.TH.Syntax as TH
 
 {-|
-  Requires @DataKinds@, @GADTs@, @KindSignatures@.
+=== Basic use
 
-  Given the name of a mutually-recursive datatype, derive an index and an
-  indexed functor as a GADT, with suffixes Ix/I and MF/MF respectively.
+Requires @DataKinds@, @GADTs@, @KindSignatures@.
 
-  For example, given:
+Given the name of a mutually-recursive datatype, derive an index and an
+indexed functor as a GADT, with suffixes Ix\/I and MF\/MF respectively. Also
+derive a type synonym for the IFix'd indexed functor, with suffix F.
 
-  @
-  data Exp = App Exp Exp | Abs Pat Exp | VarE String
-  data Pat = Wildcard | VarP String | ConP String [Pat]
-  @
+For example, given:
 
-  We could invoke @deriveMutualGADT ''Exp@ to produce the following:
+@
+data Exp = App Exp Exp | Abs Pat Exp | VarE String
+data Pat = Wildcard | VarP String | ConP String [Pat]
+@
 
-  @
-  data ExpIx = ExpI | PatI
-  data ExpMF (f :: ExpIx -> *) (ix :: ExpIx) where
-    AppMF      :: f ExpI -> f ExpI   -> MF f ExpI
-    AbsMF      :: f PatI -> f ExpI   -> MF f ExpI
-    VarEMF     :: String             -> MF f ExpI
-    WildcardMF ::                       MF f PatI
-    VarPMF     :: String             -> MF f PatI
-    ConPMF     :: String -> [f PatI] -> MF f PatI
-  @
+We could invoke @deriveMutualGADT ''Exp@ to produce the following:
+
+@
+data ExpIx = ExpI | PatI
+data ExpMF (f :: ExpIx -> *) (ix :: ExpIx) where
+  AppMF      :: f 'ExpI -> f 'ExpI   -> MF f 'ExpI
+  AbsMF      :: f 'PatI -> f 'ExpI   -> MF f 'ExpI
+  VarEMF     :: String               -> MF f 'ExpI
+  WildcardMF ::                         MF f 'PatI
+  VarPMF     :: String               -> MF f 'PatI
+  ConPMF     :: String  -> [f 'PatI] -> MF f 'PatI
+type ExpM = IFix ExpMF
+@
+
+=== Handling Type Variables
+
+If the datatypes have type variables, these will be passed around in the
+index. For example, given:
+
+@
+data Exp a = App a Exp Exp | Abs a Pat Exp | VarE a String
+data Pat a (n :: Nat) = Wildcard a | VarP a (Proxy n) String | ConP a String [Pat (n + 1)]
+@
+
+We will derive an index:
+
+@
+data ExpIx a0 a1 = ExpI a0 | PatI a0 a1
+@
+
+Which, when lifted by DataKinds, will have constructors:
+
+@
+'ExpI :: a0       -> ExpIx a0 a1
+'PatI :: a0 -> a1 -> ExpIx a0 a1
+@
+
+Will be used as the index to the mutually-recursive datatype:
+
+@
+data ExpMF (f :: ExpIx * Nat -> *) (ix :: ExpIx * Nat) where
+  AppMF      :: a0 -> f ('ExpI a0)    -> f ('ExpI a0)      -> ExpMF f ('ExpI a0)
+  AbsMF      :: a0 -> f ('PatI a0 a1) -> f ('ExpI a0)      -> ExpMF f ('ExpI a0)
+  VarEMF     :: a0 -> String                               -> ExpMF f ('ExpI a0)
+  WildcardMF :: a0                                         -> ExpMF f ('PatI a0 a1)
+  VarPMF     :: a0 -> Proxy a1        -> String            -> ExpMF f ('PatI a0 a1)
+  ConPMF     :: a0 -> String          -> [f ('PatI a0 a1)] -> ExpMF f ('PatI a0 a1)
+type ExpM = IFix ExpMF
+@
+
+=== Note on Singlethongs and Type variables
+
+Singlethongs is currently unable to derive singleton instances for datatypes
+that are not simple enums.
+
+As such, singlethongs does not support the index types generated for
+mutually-recursive datatypes with type variables, as in the example above with
+@Exp a@ and @Pat a n@.
+
 -}
 deriveMutualGADT :: TH.Name -> TH.Q [TH.Dec]
 deriveMutualGADT topLevel = do
