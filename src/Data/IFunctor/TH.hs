@@ -52,8 +52,8 @@ data ExpMF (f :: ExpIx -> *) (ix :: ExpIx) where
 type ExpM = IFix ExpMF
 @
 
-We would also use @singlethongs ''ExpIx@ to derive the singlethongs instances
-for the generated @ExpIx@.
+We would also need to use @singlethongs ''ExpIx@ to derive the singlethongs
+instances for the generated @ExpIx@.
 
 We could then invoke @deriveIFunctorITraversable ''ExpMF@ to produce the
 following instances:
@@ -72,12 +72,12 @@ instance IFunctor ExpMF where
 instance ITraversable ExpMF where
     itraverse func =
         \case
-             AppMF a0 a1  -> (pure AppMF <*> id func a0) <*> id func a1
-             AbsMF a0 a1  -> (pure AbsMF <*> id func a0) <*> id func a1
-             VarEMF a0    -> pure VarEMF <*> pure a0
+             AppMF a0 a1  -> (pure AppMF \<*\> id func a0) \<*\> id func a1
+             AbsMF a0 a1  -> (pure AbsMF \<*\> id func a0) \<*\> id func a1
+             VarEMF a0    -> pure VarEMF \<*\> pure a0
              WildcardMF   -> pure WildcardMF
-             VarPMF a0    -> pure VarPMF <*> pure a0
-             ConPMF a0 a1 -> (pure ConPMF <*> pure a0) <*> (traverse . id) func a1
+             VarPMF a0    -> pure VarPMF \<*\> pure a0
+             ConPMF a0 a1 -> (pure ConPMF \<*\> pure a0) \<*\> (traverse . id) func a1
 @
 
 Some unnecessary calls to @pure@ and @id@ are used to make the TemplateHaskell
