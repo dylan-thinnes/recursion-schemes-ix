@@ -2,15 +2,20 @@
 
 module Data.IFunctor.TH
     ( deriveMutualGADT
-      -- * Re-exported from Data.IFunctor.Foldable
+    , deriveIFunctorITraversable
+      -- * Re-exports
     , IFix(..)
+    , IFunctor
+    , ITraversable
     ) where
 
 import           Control.Monad              (guard, (>=>))
 import           Data.Functor               ((<&>))
+import           Data.IFunctor
 import           Data.Functor.Foldable      (cata, embed)
 import           Data.IFunctor.Foldable     (IFix(..))
 import           Data.IFunctor.TH.Internal  ()
+import           Data.ITraversable
 import qualified Data.Map                   as M
 import           Data.Maybe                 (fromJust)
 import           Data.List                  (nub)
@@ -18,6 +23,162 @@ import           Data.Function              ((&))
 import qualified Data.Set                   as S
 import qualified Language.Haskell.TH        as TH
 import qualified Language.Haskell.TH.Syntax as TH
+
+{-|
+Given a GADT with type @(ix -> *) -> ix -> *@ where all uses of the internal
+function @(ix -> *)@ are unwrapped or wrapped in traversable functors, derive
+the IFunctor and ITraversable instances.
+
+Goes best with @deriveMutualGADT@.
+
+For example, given:
+
+@
+data Exp = App Exp Exp | Abs Pat Exp | VarE String
+data Pat = Wildcard | VarP String | ConP String [Pat]
+@
+
+We could invoke @deriveMutualGADT ''Exp@ to produce the following:
+
+@
+data ExpIx = ExpI | PatI
+data ExpMF (f :: ExpIx -> *) (ix :: ExpIx) where
+  AppMF      :: f 'ExpI -> f 'ExpI   -> MF f 'ExpI
+  AbsMF      :: f 'PatI -> f 'ExpI   -> MF f 'ExpI
+  VarEMF     :: String               -> MF f 'ExpI
+  WildcardMF ::                         MF f 'PatI
+  VarPMF     :: String               -> MF f 'PatI
+  ConPMF     :: String  -> [f 'PatI] -> MF f 'PatI
+type ExpM = IFix ExpMF
+@
+
+We would also use @singlethongs ''ExpIx@ to derive the singlethongs instances
+for the generated @ExpIx@.
+
+We could then invoke @deriveIFunctorITraversable ''ExpMF@ to produce the
+following instances:
+
+@
+instance IFunctor ExpMF where
+    imap func =
+        \case
+            AppMF a0 a1  -> AppMF (id func a0) (id func a1)
+            AbsMF a0 a1  -> AbsMF (id func a0) (id func a1)
+            VarEMF a0    -> VarEMF a0
+            WildcardMF   -> WildcardMF
+            VarPMF a0    -> VarPMF a0
+            ConPMF a0 a1 -> ConPMF a0 ((fmap . id) func a1)
+
+instance ITraversable ExpMF where
+    itraverse func =
+        \case
+             AppMF a0 a1  -> (pure AppMF <*> id func a0) <*> id func a1
+             AbsMF a0 a1  -> (pure AbsMF <*> id func a0) <*> id func a1
+             VarEMF a0    -> pure VarEMF <*> pure a0
+             WildcardMF   -> pure WildcardMF
+             VarPMF a0    -> pure VarPMF <*> pure a0
+             ConPMF a0 a1 -> (pure ConPMF <*> pure a0) <*> (traverse . id) func a1
+@
+
+Some unnecessary calls to @pure@ and @id@ are used to make the TemplateHaskell
+generation simpler.
+-}
+deriveIFunctorITraversable :: TH.Name -> TH.Q [TH.Dec]
+deriveIFunctorITraversable name = do
+    TH.TyConI (TH.DataD _ _ tyVarBndrs _ cons _) <- TH.reify name
+    let [TH.KindedTV f fk, TH.KindedTV ix ixk] = tyVarBndrs
+
+    funcName <- TH.newName "func"
+
+    let isFType =
+            \case
+              (TH.AppT (TH.VarT f') _) -> f' == f
+              _ -> False
+
+    let gadtConToMatches (conNames, bangTypes, finalType) = do
+            let [conName] = conNames
+            let types = snd <$> bangTypes
+            patNames <- (TH.newName . ("a"++) . show) `mapM` [0..length types-1]
+
+            let updateFTypesToFmaps (patName, type_) = do
+                    (subtype, depth) <- typeGetFunctorAppDepth type_
+                    pure $
+                        if not $ isFType subtype
+                            then TH.VarE patName
+                            else repeatedFmap depth (TH.VarE funcName) (TH.VarE patName)
+
+            fmappings <- mapM updateFTypesToFmaps $ zip patNames types
+
+            let updateFTypesToTraversals (patName, type_) = do
+                    (subtype, depth) <- typeGetTraversableAppDepth type_
+                    pure $
+                        if not $ isFType subtype
+                            then TH.VarE (TH.mkName "pure") `TH.AppE` TH.VarE patName
+                            else repeatedTraverse depth (TH.VarE funcName) (TH.VarE patName)
+
+            traversals <- mapM updateFTypesToTraversals $ zip patNames types
+
+            let fullPat = TH.ConP conName $ TH.VarP <$> patNames
+            let appliedFmappings = foldl TH.AppE (TH.ConE conName) fmappings
+
+            let appliedTraversals = foldl apTH (TH.VarE (TH.mkName "pure") `TH.AppE` TH.ConE conName) traversals
+                    where
+                        apTH a b = TH.InfixE (Just a) (TH.VarE $ TH.mkName "<*>") (Just b)
+
+            pure
+                ( TH.Match fullPat (TH.NormalB appliedFmappings) []
+                , TH.Match fullPat (TH.NormalB appliedTraversals) []
+                )
+
+    (imapMatches, itraverseMatches) <- unzip <$> mapM (gadtConToMatches . fromJust . gadtCon) cons
+
+    let imapDef = TH.LamCaseE imapMatches
+    let itraverseDef = TH.LamCaseE itraverseMatches
+
+    let imapName = TH.mkName "imap"
+    let imapDec = TH.FunD imapName [TH.Clause [TH.VarP funcName] (TH.NormalB imapDef) []]
+    let ifunctorDec = TH.InstanceD Nothing [] (TH.ConT (TH.mkName "IFunctor") `TH.AppT` TH.ConT name) [imapDec]
+
+    let itraverseName = TH.mkName "itraverse"
+    let itraverseDec = TH.FunD itraverseName [TH.Clause [TH.VarP funcName] (TH.NormalB itraverseDef) []]
+    let itraversableDec = TH.InstanceD Nothing [] (TH.ConT (TH.mkName "ITraversable") `TH.AppT` TH.ConT name) [itraverseDec]
+
+    pure [ifunctorDec, itraversableDec]
+
+gadtCon :: TH.Con -> Maybe ([TH.Name], [TH.BangType], TH.Type)
+gadtCon (TH.ForallC _ _ subcon)              = gadtCon subcon
+gadtCon (TH.GadtC names bangTypes finalType) = Just (names, bangTypes, finalType)
+gadtCon _                                    = Nothing
+
+repeatedApp :: Int -> TH.Name -> TH.Exp -> TH.Exp
+repeatedApp i f x = composeAll (replicate i (TH.VarE f)) `TH.AppE` x
+    where
+        composeAll = foldr compose (TH.VarE $ TH.mkName "id")
+        compose exp1 exp2 = TH.InfixE (Just exp1) (TH.VarE $ TH.mkName ".") (Just exp2)
+
+repeatedFmap :: Int -> TH.Exp -> TH.Exp -> TH.Exp
+repeatedFmap i f x = repeatedApp i (TH.mkName "fmap") f `TH.AppE` x
+
+repeatedTraverse :: Int -> TH.Exp -> TH.Exp -> TH.Exp
+repeatedTraverse i f x = repeatedApp i (TH.mkName "traverse") f `TH.AppE` x
+
+-- Extract type value within type functions matching a typeclass
+typeGetClassAppDepth :: TH.Name -> TH.Type -> TH.Q (TH.Type, Int)
+typeGetClassAppDepth className type_ =
+    case type_ of
+        TH.AppT fn arg -> do
+            let isVar =
+                    case fn of
+                      TH.VarT _ -> True
+                      _         -> False
+            isFunctor <- (not isVar &&) <$> TH.isInstance className [fn]
+            if isFunctor
+               then (fmap . fmap) (+1) (typeGetFunctorAppDepth arg)
+               else pure (type_, 0)
+        _ -> pure (type_, 0)
+
+typeGetFunctorAppDepth = typeGetClassAppDepth (TH.mkName "Functor")
+typeGetTraversableAppDepth = typeGetClassAppDepth (TH.mkName "Traversable")
 
 {-|
 === Basic use
@@ -139,7 +300,7 @@ deriveMutualGADT topLevel = do
             TH.TyConI (TH.DataD _ _ tyVarBndrs _ cons _) <- TH.reify mutrecName
 
             -- Given a concrete type, if it matches any of the recursive
-            -- datatypes, replace it with `f <tag>`
+            -- datatypes, replace it with @f <tag>@
             let matchingTypeToFTag =
                     typeUpdateDeepApp $ \(name, depth) -> do
                         (tagConName, tagConVar) <- lookup name mutrecNamesAndTagConNamesVars
@@ -150,11 +311,11 @@ deriveMutualGADT topLevel = do
             let tyVarNames = tyVarBndrToName <$> tyVarBndrs
             let tyVarNameToConVarName name = lookup name $ tyVarNames `zip` tagConVar
 
-            -- Final type is `<name> <f> <tag>`
+            -- Final type is @<name> <f> <tag>@
             let finalType = TH.ConT gadtName `TH.AppT` TH.VarT gadtF `TH.AppT` foldl TH.AppT (TH.ConT tagConName) tagConVar
 
             cons
-                -- Update all constructors' types using to their `f <tag>` equivalents
+                -- Update all constructors' types using to their @f <tag>@ equivalents
                 & map (updateTypes matchingTypeToFTag)
                 -- Update all appropriate type variables with equivalents provided by the index
                 & map (updateTypes (typeUpdateVariable tyVarNameToConVarName))
