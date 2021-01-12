@@ -1,8 +1,9 @@
-{-# LANGUAGE LambdaCase, TupleSections, TemplateHaskell, TypeFamilies, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE StandaloneDeriving, LambdaCase, TupleSections, TemplateHaskell, TypeFamilies, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 
 module Data.IFunctor.TH
     ( deriveMutualGADT
     , deriveIFunctor
+    , deriveITraversable
       -- * Re-exports
     , IFix(..)
     , IFunctor
@@ -32,9 +33,9 @@ import qualified Data.Set                   as S
 import qualified Language.Haskell.TH        as TH
 import qualified Language.Haskell.TH.Syntax as TH
 
--- The specification for fmappings over functors
+-- The specification for fmappings over functors / traversals over traversables
 -- Finds all places in which a type variable is used in a larger type according
--- to rules set forth by DeriveFunctor.
+-- to rules for DeriveFunctor, documented in the GHC manual.
 data DeriveSpec
     = Functor TH.Type DeriveSpec
     | Tuple Int [DeriveSpec]
@@ -59,11 +60,11 @@ deriveSpec className isTarget = helper False
                   TH.ConT _
                     | not $ null args
                     -> do
-                    let possibleFunctor = foldl TH.AppT fn $ init args
-                    isFunctor <- TH.isInstance className [possibleFunctor]
-                    if not isFunctor
-                       then pure $ Leaf expectContra type_
-                       else Functor possibleFunctor <$> helper expectContra (last args)
+                        let possibleFunctor = foldl TH.AppT fn $ init args
+                        isFunctor <- TH.isInstance className [possibleFunctor]
+                        if not isFunctor
+                           then pure $ Leaf expectContra type_
+                           else Functor possibleFunctor <$> helper expectContra (last args)
                   TH.ListT
                     | [arg] <- args
                     -> Functor TH.ListT <$> helper expectContra arg
@@ -89,8 +90,8 @@ findAllTypes pred
 containsTypeTarget :: (TH.Type -> Bool) -> TH.Type -> Bool
 containsTypeTarget pred = para $ \x -> any snd x || pred (embed $ fst <$> x)
 
-verifyDeriveSpec :: (TH.Type -> Bool) -> DeriveSpec -> [String]
-verifyDeriveSpec isTarget = cata alg
+specIsMappable :: (TH.Type -> Bool) -> DeriveSpec -> [String]
+specIsMappable isTarget = cata alg
     where
         alg (LeafF isContravariant leafType)
           = [ "Contravariant use of type variable."
@@ -119,15 +120,13 @@ deriveSpecToFmaps fName isTarget = cata alg
         qalg (TupleF _ subs) = do
             args <- (TH.newName . ("a" ++) . show) `mapM` [0..length subs - 1]
 
-            sequence $ do
+            forM [0..length subs - 1] $ \currI -> do
                 let pat = TH.TupP $ map TH.VarP args
-
-                (currI, arg) <- [0..] `zip` args
 
                 let f i sub arg = if i == currI then TH.AppE sub arg else arg
                 let body = TH.TupE (zipWith3 f [0..] subs (map TH.VarE args))
 
-                pure [| \ $(pure pat) -> $(pure body) |]
+                [| \ $(pure pat) -> $(pure body) |]
         qalg (contraSub :->$ covSub) =
             pure <$> [| \x -> $(pure covSub) . x . $(pure contraSub) |]
 
@@ -135,6 +134,43 @@ deriveSpecToFmap :: TH.Name -> (TH.Type -> Bool) -> DeriveSpec -> TH.Q TH.Exp
 deriveSpecToFmap fName isTarget spec = do
     exps <- deriveSpecToFmaps fName isTarget spec
     foldr (\v acc -> [| $(pure v) . $(acc) |]) [| id |] exps
+
+specIsTraversable :: (TH.Type -> Bool) -> DeriveSpec -> [String]
+specIsTraversable isTarget = cata alg
+    where
+        alg (LeafF _ leafType)
+          = [ concat [ "Type variable is contained in non-traversable, non-tuple type '", TH.pprint leafType, "'" ]
+            | not (isTarget leafType) && containsTypeTarget isTarget leafType
+            ]
+        alg (left :->$ right)
+          = [ "Exponential type cannot be traversed over." ]
+        alg typeF = fold typeF
+
+deriveSpecToTraversal :: TH.Name -> (TH.Type -> Bool) -> DeriveSpec -> TH.Q TH.Exp
+deriveSpecToTraversal fName isTarget = cata alg
+    where
+        alg :: DeriveSpecF (TH.Q TH.Exp) -> TH.Q TH.Exp
+        alg = sequence >=> qalg
+
+        qalg :: DeriveSpecF TH.Exp -> TH.Q TH.Exp
+        qalg (FunctorF _ subFunc) = [| traverse $(pure subFunc) |]
+        qalg (LeafF _ leafType) =
+            if isTarget leafType
+               then TH.varE fName
+               else [| pure |]
+        qalg (TupleF _ subFuncs) = do
+            -- Tuple section which takes N arguments and produces a N-tuple
+            sectionArgs <- (TH.newName . ("a" ++) . show) `mapM` [0..length subFuncs - 1]
+            section <- map TH.varP sectionArgs `TH.lamE` TH.tupE (map TH.varE sectionArgs)
+
+            args <- (TH.newName . ("a" ++) . show) `mapM` [0..length subFuncs - 1]
+            let traversedArgs = zipWith TH.AppE subFuncs (map TH.VarE args)
+
+            let apply qacc qnew = [| $(qacc) <*> $(qnew) |]
+
+            [TH.tupP $ map TH.varP args] `TH.lamE` foldl apply [| pure $(pure section) |] (map pure traversedArgs)
+        qalg (contraSubFunc :->$ covSubFunc) =
+            error "deriveSpecToTraversal: Cannot derive traversal for exponential type."
 
 {-|
 Given a GADT with type @(ix -> *) -> ix -> *@ where all uses of the internal
@@ -167,8 +203,8 @@ type ExpM = IFix ExpMF
 We would also need to use @singlethongs ''ExpIx@ to derive the singlethongs
 instances for the generated @ExpIx@.
 
-We could then invoke @deriveIFunctor ''ExpMF@ to produce the
-following instances:
+We could then invoke @deriveIFunctor ''ExpMF@ and @deriveITraversable ''ExpMF@
+to produce the following two instances, respectively:
 
 @
 instance IFunctor ExpMF where
@@ -180,10 +216,20 @@ instance IFunctor ExpMF where
             WildcardMF   -> WildcardMF
             VarPMF a0    -> VarPMF a0
             ConPMF a0 a1 -> ConPMF a0 (fmap func a1)
+
+instance ITraversable ExpMF where
+    itraverse func =
+        \case
+            AppMF a0 a1  -> AppMF <$> func a0 <*> func a1
+            AbsMF a0 a1  -> AbsMF <$> func a0 <*> func a1
+            VarEMF a0    -> pure $ VarEMF a0
+            WildcardMF   -> pure $ WildcardMF
+            VarPMF a0    -> pure $ VarPMF a0
+            ConPMF a0 a1 -> ConPMF <$> pure a0 <*> traverse func a1
 @
 
-In reality, the generated Haskell is a bit more complex than this, but is
-functionally equivalent.
+In reality, the generated Haskell is a bit more complex than this in order to
+simplify code-gen, but is functionally equivalent.
 -}
 deriveIFunctor :: TH.Name -> TH.Q [TH.Dec]
 deriveIFunctor topLevelName = do
@@ -199,7 +245,7 @@ deriveIFunctor topLevelName = do
     consMatchers <- forM consWOForall $ \con -> do
         let (TH.GadtC [conName] bangTypes _) = con
 
-        typeFmaps <- forM bangTypes $ \(_, type_) -> do
+        mTypeFmaps <- forM bangTypes $ \(_, type_) -> do
             let isTargetVar type_ =
                     not $ null [() | TH.AppT (TH.VarT n) _ <- [type_], n == fVar]
 
@@ -207,9 +253,9 @@ deriveIFunctor topLevelName = do
                then pure Nothing
                else Just <$> do
                     spec <- deriveSpec ''Functor isTargetVar type_
-                    let specErrors = verifyDeriveSpec isTargetVar spec
+                    let specErrors = specIsMappable isTargetVar spec
                     if not (null specErrors)
-                       then error $ unlines $ "Error deriving IFunctor:" : specErrors
+                       then error $ unlines $ ("Error deriving IFunctor for constructor '" ++ show conName ++ "':") : specErrors
                        else pure ()
                     deriveSpecToFmap fmapArgVar isTargetVar spec
 
@@ -220,7 +266,7 @@ deriveIFunctor topLevelName = do
                     [| $(pure typeFmap) $(TH.varE conArgName) |]
 
         conArgNames <- mapM (TH.newName . ("a"++) . show) [0..length bangTypes - 1]
-        fmappedArgVars <- zipWithM applyFmap typeFmaps conArgNames
+        fmappedArgVars <- zipWithM applyFmap mTypeFmaps conArgNames
         let appliedFmappings = foldl TH.AppE (TH.ConE conName) fmappedArgVars
 
         let pat = TH.ConP conName $ TH.VarP <$> conArgNames
@@ -232,6 +278,58 @@ deriveIFunctor topLevelName = do
     [d|
         instance IFunctor $(TH.conT topLevelName) where
             imap $(TH.varP fmapArgVar) = $(pure $ TH.LamCaseE consMatchers)
+     |]
+
+deriveITraversable :: TH.Name -> TH.Q [TH.Dec]
+deriveITraversable topLevelName = do
+    (TH.TyConI (TH.DataD _ _ [fBndr, ixBndr] _ cons _)) <- TH.reify topLevelName
+    let fVar =
+            case fBndr of
+                TH.KindedTV name kind -> name
+                TH.PlainTV name -> name
+    let consWOForall = (\(TH.ForallC _ _ con) -> con) <$> cons
+
+    traversalArgVar <- TH.newName "f"
+
+    consMatchers <- forM consWOForall $ \con -> do
+        let (TH.GadtC [conName] bangTypes _) = con
+
+        mTypeTraversals <- forM bangTypes $ \(_, type_) -> do
+            let isTargetVar type_ =
+                    not $ null [() | TH.AppT (TH.VarT n) _ <- [type_], n == fVar]
+
+            if not (containsTypeTarget isTargetVar type_)
+               then pure Nothing
+               else Just <$> do
+                    spec <- deriveSpec ''Traversable isTargetVar type_
+                    let specErrors = specIsMappable isTargetVar spec
+                    if not (null specErrors)
+                       then error $ unlines $ ("Error deriving ITraversable for constructor '" ++ show conName ++ "':") : specErrors
+                       else pure ()
+                    deriveSpecToTraversal traversalArgVar isTargetVar spec
+
+        let applyTraversal mTypeTraversal conArgName =
+                case mTypeTraversal of
+                  Nothing -> [| pure $(TH.varE conArgName) |]
+                  Just typeTraversal ->
+                    [| $(pure typeTraversal) $(TH.varE conArgName) |]
+
+        conArgNames <- mapM (TH.newName . ("a"++) . show) [0..length bangTypes - 1]
+        traversedArgVars <- zipWithM applyTraversal mTypeTraversals conArgNames
+
+        let apply qacc qnew = [| $(qacc) <*> $(qnew) |]
+
+        appliedTraversals <- foldl apply [| pure $(TH.conE conName) |] (map pure traversedArgVars)
+
+        let pat = TH.ConP conName $ TH.VarP <$> conArgNames
+
+        let match = TH.Match pat (TH.NormalB appliedTraversals) []
+
+        pure match
+
+    [d|
+        instance ITraversable $(TH.conT topLevelName) where
+            itraverse $(TH.varP traversalArgVar) = $(pure $ TH.LamCaseE consMatchers)
      |]
 
 {-|
