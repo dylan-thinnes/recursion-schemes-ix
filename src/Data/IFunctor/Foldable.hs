@@ -76,7 +76,7 @@ module Data.IFunctor.Foldable
     , module Data.IFunctor.IIdentity
     , module Data.IMonad
     , module Data.ITraversable
-    , module Singlethongs
+    , module Data.Singletons
     ) where
 
 import           Control.Monad           ((<=<))
@@ -94,7 +94,7 @@ import           Data.IMonad             (IMonad (..))
 import           Data.ITraversable       (ITraversable (..), imapDefault)
 import           Data.Typeable           (Typeable)
 import           GHC.Generics            (Generic, Generic1)
-import           Singlethongs            (SingI (sing))
+import           Data.Singletons         (SingI (sing))
 import           Text.Read
 
 -- | Fixpoint type
@@ -403,6 +403,3 @@ gpostpro k e g = a . ipure
     where
         a :: m a ~~> IFix f
         a = IFix . imap (cata (IFix . e) . a . ijoin) . k . imap g
-
-
-

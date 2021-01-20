@@ -27,7 +27,7 @@ module Data.IFunctor.Classes
 
 import           Data.Functor.Product (Product (..))
 import           Data.Functor.Sum     (Sum (..))
-import           Singlethongs         (SingI)
+import           Data.Singletons      (SingI)
 import           Text.Read
 
 class IShow f where
@@ -139,4 +139,3 @@ instance IEq2 a => IEq (Product a) where
 
 instance IOrd2 a => IOrd (Product a) where
     icompare comp (Pair a b) (Pair a' b') = icompare2 a a' <> comp b b'
-

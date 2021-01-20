@@ -20,7 +20,7 @@ import           Data.IMonad           (IMonad (..))
 import           Data.ITraversable     (ITraversable (..))
 import           Data.Typeable         (Typeable)
 import           GHC.Generics          (Generic, Generic1)
-import           Singlethongs          (SingI)
+import           Data.Singletons       (SingI)
 import           Text.Read
 
 data IIdentity f ix = IIdentity
@@ -70,4 +70,3 @@ instance (IEq2 f, SingI ix) => Eq (IIdentity f ix) where
 
 instance (IOrd2 f, SingI ix) => Ord (IIdentity f ix) where
     compare = icompare1
-

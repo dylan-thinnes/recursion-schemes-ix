@@ -18,7 +18,7 @@ import           Data.IFunctor.Classes
 import           Data.ITraversable     (ITraversable (..))
 import           Data.Typeable         (Typeable)
 import           GHC.Generics          (Generic, Generic1)
-import           Singlethongs          (SingI)
+import           Data.Singletons       (SingI)
 import           Text.Read
 
 infixr 5 ::<

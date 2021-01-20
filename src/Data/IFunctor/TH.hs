@@ -200,7 +200,7 @@ data ExpMF (f :: ExpIx -> *) (ix :: ExpIx) where
 type ExpM = IFix ExpMF
 @
 
-We would also need to use @singlethongs ''ExpIx@ to derive the singlethongs
+We would also need to use @genSingletons [''ExpIx]@ to derive the singleton
 instances for the generated @ExpIx@.
 
 We could then invoke @deriveIFunctor ''ExpMF@ and @deriveITraversable ''ExpMF@
@@ -397,15 +397,6 @@ data ExpMF (f :: ExpIx * Nat -> *) (ix :: ExpIx * Nat) where
   ConPMF     :: a0 -> String          -> [f ('PatI a0 a1)] -> ExpMF f ('PatI a0 a1)
 type ExpM = IFix ExpMF
 @
-
-=== Note on Singlethongs and Type variables
-
-Singlethongs is currently unable to derive singleton instances for datatypes
-that are not simple enums.
-
-As such, singlethongs does not support the index types generated for
-mutually-recursive datatypes with type variables, as in the example above with
-@Exp a@ and @Pat a n@.
 
 -}
 deriveMutualGADT :: TH.Name -> TH.Q [TH.Dec]

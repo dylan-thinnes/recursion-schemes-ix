@@ -18,7 +18,7 @@ import           Data.IMonad           (IMonad (..))
 import           Data.ITraversable     (ITraversable (..))
 import           Data.Typeable         (Typeable)
 import           GHC.Generics          (Generic, Generic1)
-import           Singlethongs          (SingI)
+import           Data.Singletons       (SingI)
 import           Text.Read
 
 -- | Free IMonad
@@ -84,5 +84,3 @@ instance (IEq f, IEq2 a, SingI ix) => Eq (IFree f a ix) where
 
 instance (IOrd f, IOrd2 a, SingI ix) => Ord (IFree f a ix) where
     compare = icompare1
-
-

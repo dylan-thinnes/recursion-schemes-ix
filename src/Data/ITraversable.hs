@@ -15,7 +15,7 @@ import           Data.Functor.Identity (Identity (Identity, runIdentity))
 import           Data.Functor.Product  (Product (Pair))
 import           Data.Functor.Sum      (Sum (InL, InR))
 import           Data.IFunctor
-import           Singlethongs          (SingI)
+import           Data.Singletons       (SingI)
 
 class IFunctor f => ITraversable f where
     itraverse :: (Applicative m, SingI ix)
@@ -35,4 +35,3 @@ instance ITraversable (Sum a) where
 
 instance ITraversable (Product a) where
     itraverse f (Pair a b) = Pair a <$> f b
-
